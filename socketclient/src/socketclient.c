@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 
 #include <unistd.h>
+#include <string.h>
 
 int main()
 {
@@ -23,6 +24,7 @@ int main()
 	struct sockaddr_in server_address;
 
 	char server_response[256];
+	char client_msg[256];
 
 	network_socket = socket(AF_INET,
 							SOCK_STREAM,
@@ -44,15 +46,31 @@ int main()
 		return 0;
 	}
 
+	printf("Connected to server \n");
+
 	recv(	network_socket,
 			&server_response,
 			sizeof(server_response),
 			0);
-
-	// print the data from the server
+	// print the welcome msg from the server
 	printf("Server data: %s\n", server_response);
 
-	close(network_socket);
+	while(1)
+	{
+		/* scanf a new message */
+		scanf("%s", client_msg);
+		/* dont send 256 characters only send until EOL */
+		send(network_socket, client_msg, strlen(client_msg), 0);
 
-	return 0;
+		/* need a cmd to close the connection */
+		if(strcmp(client_msg, "!exit") == 0)
+		{
+			/* client wants to close connection - send special cmd to server */
+			printf("Disconnecting...\n");
+			close(network_socket);
+			return 0;
+
+		}
+
+	}
 }
