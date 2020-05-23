@@ -1,0 +1,2 @@
+# LinuxSimpleChat
+Minimalist chat
