@@ -25,6 +25,16 @@ int main()
 
 	char server_response[256];
 	char client_msg[256];
+	char nickNameClient[256];
+	int strLen = 0;
+
+	/* fgets the nickname */
+	memset(nickNameClient, '\0', sizeof(nickNameClient));
+	fgets(nickNameClient, sizeof(nickNameClient), stdin);
+
+	/*delete the \n from the input*/
+	strLen = strlen(nickNameClient);
+	nickNameClient[strLen - 1] = '\0';
 
 	network_socket = socket(AF_INET,
 							SOCK_STREAM,
@@ -34,6 +44,8 @@ int main()
 	server_address.sin_port = htons(9002);
 	server_address.sin_addr.s_addr = INADDR_ANY;
 
+	printf("Connecting %s to server... \n", nickNameClient);
+
 	connection_status = connect(	network_socket,
 									(struct sockadd *) &server_address,
 									sizeof(server_address));
@@ -41,24 +53,35 @@ int main()
 
 	if(connection_status == -1)
 	{
-		printf("error connection to the remote socket\n");
+		/* Server is shutdown */
+		printf("Error connection to the remote socket.\n");
 		close(network_socket);
 		return 0;
 	}
 
-	printf("Connected to server \n");
+	printf("Connected to server.\n");
 
+	/* First send the name to the server */
+	send(	network_socket,
+			nickNameClient,
+			strlen(nickNameClient),
+			0);
+
+	/* Then wait for the welcome message from server */
 	recv(	network_socket,
 			&server_response,
 			sizeof(server_response),
 			0);
-	// print the welcome msg from the server
-	printf("Server data: %s\n", server_response);
+
+	printf("%s \n\n", server_response);
 
 	while(1)
 	{
 		/* scanf a new message */
-		scanf("%s", client_msg);
+		fgets(client_msg, sizeof(client_msg), stdin);
+		strLen = strlen(client_msg);
+		client_msg[strLen - 1] = '\0';
+
 		/* dont send 256 characters only send until EOL */
 		send(network_socket, client_msg, strlen(client_msg), 0);
 

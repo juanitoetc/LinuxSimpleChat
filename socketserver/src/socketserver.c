@@ -30,7 +30,7 @@ int main()
 	pid_t pidRtn;
 	int errnum;
 
-	char server_message[256] = "Hello from the server";
+	char server_message[256] = "Hello ";
 	char client_message[256];
 
 	int server_socket, new_client_socket;
@@ -81,26 +81,46 @@ int main()
 			exit(1);
 		}
 
-		/* new client successfully connected */
-		printf("New client information: add:%s - port:%i", inet_ntoa(new_client_address.sin_addr), ntohs(new_client_address.sin_port));
-
 		/* make a fork. return 0 to the child - return childPid to the parent */
 		pidRtn = fork();
 
 		if(pidRtn == 0)
 		{
 			/* inside the child - pidRtn has a 0*/
+
+			/* receive the client nickname */
+			recv(	new_client_socket,
+					&client_message,
+					sizeof(client_message),
+					0);
+
+			/* Print all information server side */
+			printf("	New client information:\n "
+					"	name: %s\n "
+					"	address: %s\n "
+					"	port: %i\n",
+					client_message,
+					inet_ntoa(new_client_address.sin_addr),
+					ntohs(new_client_address.sin_port));
+
+			// prepare welcome message to client and send it
+			strcat(server_message, client_message);
+			strcat(server_message, "to the server");
+
 			// send welcome msg to the new client
 			send(	new_client_socket,
 					server_message,
 					sizeof(server_message),
 					0);
 
-			/* close the port because is already in use and not available anymore */
+			/* Close the server port because is already in use by the parent. Its not
+			 * useful anymore on the child */
 			close(server_socket);
 
 			while(1)
 			{
+				/* Empty the buffer */
+				memset(client_message, '\0', sizeof(client_message));
 				/* print whatever the client sends */
 				recv(new_client_socket, client_message, sizeof(client_message), 0);
 
