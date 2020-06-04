@@ -22,15 +22,46 @@
 
 #include <errno.h>
 
+#include <sys/mman.h>
+
+#include <fcntl.h>
+
+
 extern int errno;
 
 #define RD_END_PIPE 0	/* Read-end of the pipe - Children send the data to the parent, Children should close fd0*/
 #define WR_END_PIPE 1	/* Write-end of the pipe - Parent receives data from children, Parent should close fd1*/
 
+#define MAX_CLIENTS 5
+#define MAX_LENGHT_CHAR	256
+
+#define _GNU_SOURCE
+
+
+/* Structure in the server listener of current connected clients */
+typedef struct stClientData
+{
+	int iBusy;		/* quick way to know which places are being used*/
+	struct sockaddr_in stClientAddress;
+	int	isocketId;
+	int iUserId;
+	char chUserName[MAX_LENGHT_CHAR];
+	char chMsgBuff[MAX_LENGHT_CHAR];
+	int Dirty;
+
+}stClientData;
+
+stClientData stClients[MAX_CLIENTS];
+
 
 int main()
 {
+	int flags;
+
+	fd_set status, current;
 	pid_t pidClient;
+
+	struct timeval tv;
 
 	pid_t pidClientSender;
 	pid_t pidClientReceiver;
@@ -38,6 +69,9 @@ int main()
 	pid_t pidClientReceiveFromOthersClients;
 
 	int errnum;
+	int i= 0, j = 0, h = 0, k = 0;
+	int new = 0;
+	int currentSocket;
 
 	char server_message[256] = "Hello ";
 	char client_message[256];
@@ -45,15 +79,22 @@ int main()
 	char parent_message_client[256];
 
 	int  pipeClientStdinToSender[2];
+	int  pipeUpdateClientsList[2];
+
+	int iRtnAccept;
 
 	int server_socket, new_client_socket;
 	struct sockaddr_in server_address;
 	struct sockaddr_in new_client_address;
 
 	int new_client_address_len;
+	int currentClients = 0;
 
 	memset(&server_address, '\0', sizeof(server_address));
 	memset(&new_client_address, '\0', sizeof(new_client_address));
+
+	tv.tv_sec = 3;
+	tv.tv_usec = 0;
 
 
 	server_socket = socket(	AF_INET,
@@ -68,164 +109,215 @@ int main()
 			(struct sockaddr*) &server_address,
 			sizeof(server_address));
 
-	listen(	server_socket,
-			5);
+	listen(	server_socket, MAX_CLIENTS);
 
-	// have to accept several incoming clients, I use fork
+	// have to accept several incoming clients,
+	// Can't use fork because only the last client connected will have access to the full fd table,
+	// previous clients don't get the latest fd
+
+	// I use select
+
+	// initializes a descriptor set fdset	to the null set.
+	FD_ZERO(&status);
+
+	// includes a particular descriptor fd in fdset.
+	FD_SET(server_socket, &status);
+
+	memset(stClients[0].chMsgBuff, '\0', sizeof(stClients[0].chMsgBuff));
+	memset(stClients[0].chUserName, '\0', sizeof(stClients[0].chUserName));
+	strcpy(stClients[0].chUserName,"Listener");
+	stClients[0].iBusy = 1;
+	stClients[0].isocketId = server_socket;
+	stClients[0].stClientAddress = server_address;
+	stClients[0].iUserId = 0;
+
+	FD_SET(0, &status);
 
 	while(1)
 	{
-		new_client_address_len = sizeof(new_client_address);
+		/* sleep a littlebit */
+		sleep(1);
 
-		new_client_socket = accept(	server_socket,
-									(struct socketadd *)&new_client_address,
-									&(new_client_address_len));
+		/* make a copy, every time I call select fd_set is destroyed */
+		current = status;
 
-		if(new_client_socket < 0)
+		/* from now current is my complete fd_set */
+
+		/* nfds is the highest-numbered file descriptor in any of the three sets, plus 1 */
+		if (select(MAX_CLIENTS +  2, &current, NULL, NULL, &tv) == -1 )
 		{
-			/* use errno to handle a connection error on a debug phase */
-			errnum = errno;
-			printf("Value of errno: %d\n", errnum);
-
-			/* error receivnig new incomming clients */
-			/*TODO not close everything haha */
-			printf("Error handling new clients. Everything shutdown\n");
-			close(server_socket);
-			exit(1);
+			perror("Select");
+			return 0;
 		}
 
-		/* make a fork. return 0 to the child - return childPid to the parent */
-		pidClient = fork();
-
-		if(pidClient == 0)
+		for (j =0; j< MAX_CLIENTS + 2; j++)
 		{
-			/* inside the child - pidClient has a 0*/
+			currentSocket = stClients[j].isocketId;
 
-			/* receive the client nickname */
-			recv(	new_client_socket,
-					&client_message,
-					sizeof(client_message),
-					0);
-
-			/* Print all information server side */
-			printf("	New client information:\n "
-					"	name: %s\n "
-					"	address: %s\n "
-					"	port: %i\n",
-					client_message,
-					inet_ntoa(new_client_address.sin_addr),
-					ntohs(new_client_address.sin_port));
-
-			// prepare welcome message to client and send it
-			strcat(server_message, client_message);
-			strcat(server_message, " to the server");
-
-			// send welcome msg to the new client
-			send(	new_client_socket,
-					server_message,
-					sizeof(server_message),
-					0);
-
-			/* Close the server port because is already in use by the parent. Its not
-			 * useful anymore on the child */
-			close(server_socket);
-
-			/* I need in total three process to control the client
-			 * 1 - Receive information from other child clients (what others have writing
-			 * 2 - Receive information from current child client (keyboard)
-			 * 3 - Send both above to all clients */
-
-			/* pidClientSender stores 0 the first child of the fork.
-			 * Will use it to send to all clients all messages */
-
-			pidClientSender = getpid();
-
-			pipe(pipeClientStdinToSender);
-
-			pidClientReceiver = fork();
-
-			if(pidClientReceiver == 0)
+			if (FD_ISSET(currentSocket, &current))
 			{
-				/* Im in the Receiver, here I will have to receive from
-				 * Stdin
-				 * Other clients */
-
-				/* Close the reading pipe */
-				close(pipeClientStdinToSender[RD_END_PIPE]);
-
-				while(1)
+				if (currentSocket == server_socket)
 				{
-					/* Empty the buffer */
+					/* im in the listener */
+					/* should accept the new connection and add it to the list */
 					memset(client_message, '\0', sizeof(client_message));
 
-					/* print whatever the client sends */
-					recv(new_client_socket, client_message, sizeof(client_message), 0);
+					new_client_address_len = sizeof(new_client_address);
 
-					/* TODO need a close strg to disconnect */
-					/* check if it works properly */
-					if(strcmp(client_message, "!exit") == 0)
+					new_client_socket = accept(	currentSocket,
+												(struct socketadd *)&new_client_address,
+												&new_client_address_len);
+
+					flags = fcntl(new_client_socket, F_GETFL, 0);
+					fcntl(new_client_socket, F_SETFL, flags | O_NONBLOCK);
+
+					if (new_client_socket == -1)
 					{
-						/* client send the exit cmd */
-						printf("Child %d disconnecting...\n", getpid());
+						perror ("Couldn't accept connection");
+					}
+					else if (new_client_socket > MAX_CLIENTS + 2)
+					{
+						printf ("Unable to accept new connection.\n");
 						close(new_client_socket);
-						break;
 					}
 					else
 					{
-						printf("Child process %d says: %s\n", getpid(), client_message);
-						printf("Sending to clients... \n");
-						/* Send it also to the this parent the Sender to share with all clients */
-						write(pipeClientStdinToSender[WR_END_PIPE], client_message, (strlen(client_message)+1));
+						currentClients++;
+
+						memset(server_message, '\0', sizeof(server_message));
+						strcpy(server_message, "Hello ");
+
+						/* not error / not full / add all info to the structure*/
+						recv(	new_client_socket,
+								&client_message,
+								sizeof(client_message),
+								0);
+						/* Print all information server side */
+						printf("	New client information:\n "
+								"	name: %s\n "
+								"	address: %s\n "
+								"	port: %i\n",
+								client_message,
+								inet_ntoa(new_client_address.sin_addr),
+								ntohs(new_client_address.sin_port));
+
+						strcat(server_message, client_message);
+						strcat(server_message, " to the server");
+
+						send(	new_client_socket,
+								server_message,
+								sizeof(server_message),
+								0);
+
+						/* add to the last position in fd_set */
+						FD_SET(new_client_socket, &status);
+
+						for(h = 1; h < MAX_CLIENTS ;h++)
+						{
+							if(stClients[h].iBusy == 0)
+							{
+								break;
+							}
+
+						}
+
+						memset(stClients[h].chMsgBuff, '\0', sizeof(stClients[h].chMsgBuff));
+						memset(stClients[h].chUserName, '\0', sizeof(stClients[h].chUserName));
+						stClients[h].iBusy = 1;
+						stClients[h].isocketId = new_client_socket;
+						stClients[h].stClientAddress = new_client_address;
+						stClients[h].Dirty = 0;
+						strcpy(stClients[h].chUserName, client_message);
 
 					}
 
-				}
+				} /* end of listener */
+				else
+				{
+					for(h = 0; h < MAX_CLIENTS ;h++)
+					{
+						if(stClients[h].isocketId == currentSocket)
+						{
+							break;
+						}
 
-			}
+					}
+					/* h has the position in the array */
+
+
+					/* Empty the buffer */
+					memset(client_message, '\0', sizeof(client_message));
+
+					/* receive whatever the client sends */
+					new = recv(currentSocket, client_message, sizeof(client_message), MSG_DONTWAIT);
+
+					if(new <= 0)
+					{
+						/* nothing to read.
+						 * Check if there was something in the buffer, send it and clean it */
+						/* Another child receives the disconnection signal, do nothing */
+					}
+					else
+					{
+						if(strcmp(client_message, "!exit") == 0)
+						{
+							/* client send the exit cmd */
+							printf("Child %d disconnecting...\n", getpid());
+
+							/* remove from fd list */
+							FD_CLR(stClients[h].isocketId, &status);
+
+							/* close socket */
+							close(stClients[h].isocketId);
+
+							/* remove from array */
+							stClients[h].iBusy = 0;
+
+							/* decrement counter */
+							currentClients--;
+
+
+							break;
+						}
+						else
+						{
+							stClients[h].Dirty = 1;
+							strcpy(stClients[h].chMsgBuff, client_message);
+						}
+					}
+				}
+			}/* end FD_ISSET */
 			else
 			{
-
-				/* Im in the parent, the one that I will use to send all information */
-				/* send received and write msg to all clients */
-
-				pidClientSender = getpid();
-				close(pipeClientStdinToSender[WR_END_PIPE]);
-
-				while(1)
+				for(h = 0; h < MAX_CLIENTS ;h++)
 				{
-					/* Empty the buffer */
-					memset(parent_message_client, '\0', sizeof(parent_message_client));
+					if(stClients[h].isocketId == currentSocket)
+					{
+						break;
+					}
 
-					/* Read in a string from the pipe */
-					read(pipeClientStdinToSender[RD_END_PIPE], parent_message_client, sizeof(parent_message_client));
-
-
-					send(	new_client_socket,
-							parent_message_client,
-							sizeof(parent_message_client),
-							0);
+				}
+				if(stClients[h].Dirty == 1)
+				{
+					for(k = 1; (k < MAX_CLIENTS) ;k++)
+					{
+						if((k!=h) && (stClients[k].iBusy == 1))
+						{
+							send(	stClients[k].isocketId,
+									stClients[h].chMsgBuff,
+									sizeof(stClients[h].chMsgBuff),
+									0);
+						}
+					}
+					stClients[h].Dirty = 0;
+					strcpy(stClients[h].chMsgBuff, "\0");
 
 				}
 
 
 			}
+		} /* end for */
 
-		}
-		else
-		{
-			/* inside the parent - pidClient has the pidChild */
-			memset(client_message_parent, '\0', sizeof(client_message_parent));
+	} /* end while */
 
-			printf("A new client connected with pidChild: %d\n", pidClient);
-			printf("Waiting for new clients...");
-
-		}
-
-	}
-
-	close(server_socket);
-	return 0;
-
-}
-
-
+}/* end main */

@@ -129,8 +129,6 @@ int main()
 				died = 0;
 				for(loop; (!died && loop < 5) ; ++loop)
 				{
-
-				    pid_t id;
 				    sleep(1);
 				    if (waitpid(pidClientSide, &status, WNOHANG) == pidClientSide)
 				    	died = 1;
@@ -140,6 +138,7 @@ int main()
 					kill(pidClientSide, SIGKILL);
 
 				/*exit client parent */
+				sleep(1);
 				exit(0);
 
 			}
