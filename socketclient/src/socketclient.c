@@ -19,6 +19,8 @@
 #include <string.h>
 #include <signal.h>
 
+#include <arpa/inet.h>
+
 int main()
 {
 	int network_socket, connection_status;
@@ -48,8 +50,9 @@ int main()
 							0);
 
 	server_address.sin_family = AF_INET;
-	server_address.sin_port = htons(9002);
-	server_address.sin_addr.s_addr = INADDR_ANY;
+	server_address.sin_port = htons(59081);
+
+	server_address.sin_addr.s_addr = inet_addr("181.31.139.112");
 
 	printf("Connecting %s to server... \n", nickNameClient);
 

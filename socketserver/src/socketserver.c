@@ -102,8 +102,8 @@ int main()
 							0);
 
 	server_address.sin_family = AF_INET;
-	server_address.sin_port = htons(9002);
-	server_address.sin_addr.s_addr = INADDR_ANY;
+	server_address.sin_port = htons(59081);
+	server_address.sin_addr.s_addr = htonl(INADDR_ANY);;
 
 	bind(	server_socket,
 			(struct sockaddr*) &server_address,
